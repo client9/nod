@@ -199,25 +199,42 @@ func TestValueWithColon(t *testing.T) {
 // ---- quoted values ----
 
 func TestQuotedValue(t *testing.T) {
+	// Quotes are emitted as-is; the caller is responsible for stripping them.
 	nodes := parse(t, `name "Margaret Louise Carter"`+"\n")
-	if nodes[0].Value != "Margaret Louise Carter" {
+	if nodes[0].Value != `"Margaret Louise Carter"` {
 		t.Errorf("got %q", nodes[0].Value)
 	}
 }
 
 func TestQuotedValuePreservesInnerWhitespace(t *testing.T) {
 	nodes := parse(t, `note "  leading space preserved  "`+"\n")
-	if nodes[0].Value != "  leading space preserved  " {
+	if nodes[0].Value != `"  leading space preserved  "` {
 		t.Errorf("got %q", nodes[0].Value)
+	}
+}
+
+func TestEscapedQuoteInValue(t *testing.T) {
+	nodes := parse(t, `name "he said \"hello\""`+"\n")
+	if nodes[0].Value != `"he said \"hello\""` {
+		t.Errorf("got %q", nodes[0].Value)
+	}
+}
+
+func TestMixedValue(t *testing.T) {
+	nodes := parse(t, "foo bar \"baz\" `qux`\n")
+	want := "bar \"baz\" `qux`"
+	if nodes[0].Value != want {
+		t.Errorf("got %q, want %q", nodes[0].Value, want)
 	}
 }
 
 // ---- multiline backtick values ----
 
 func TestMultilineValue(t *testing.T) {
+	// Backtick delimiters and all whitespace are emitted as-is.
 	src := "text `first line,\n      second line,\n      third line.`\n"
 	nodes := parse(t, src)
-	want := "first line,\nsecond line,\nthird line."
+	want := "`first line,\n      second line,\n      third line.`"
 	if nodes[0].Value != want {
 		t.Errorf("got %q, want %q", nodes[0].Value, want)
 	}
@@ -227,7 +244,7 @@ func TestMultilineValueAsChild(t *testing.T) {
 	src := "footnote ref\n  text `Ohio birth certificate,\n        file no. 1923.`\n"
 	nodes := parse(t, src)
 	child := nodes[0].Children[0]
-	want := "Ohio birth certificate,\nfile no. 1923."
+	want := "`Ohio birth certificate,\n        file no. 1923.`"
 	if child.Value != want {
 		t.Errorf("got %q, want %q", child.Value, want)
 	}
@@ -235,7 +252,7 @@ func TestMultilineValueAsChild(t *testing.T) {
 
 func TestSingleLineBacktick(t *testing.T) {
 	nodes := parse(t, "tag `value`\n")
-	if nodes[0].Value != "value" {
+	if nodes[0].Value != "`value`" {
 		t.Errorf("got %q", nodes[0].Value)
 	}
 }
@@ -340,7 +357,8 @@ func TestWriteDeepNesting(t *testing.T) {
 }
 
 func TestWriteQuotedValue(t *testing.T) {
-	nodes := []Node{{Tag: "note", Value: "  leading space  "}}
+	// The caller encodes the value; Write emits it as-is.
+	nodes := []Node{{Tag: "note", Value: `"  leading space  "`}}
 	want := "note \"  leading space  \"\n"
 	if got := write(t, nodes); got != want {
 		t.Errorf("got %q, want %q", got, want)
@@ -348,8 +366,10 @@ func TestWriteQuotedValue(t *testing.T) {
 }
 
 func TestWriteMultilineValue(t *testing.T) {
-	nodes := []Node{{Tag: "text", Value: "line one,\nline two,\nline three."}}
-	want := "text `line one,\n      line two,\n      line three.`\n"
+	// Caller provides the backtick-wrapped value; embedded newlines produce
+	// multiline output naturally.
+	nodes := []Node{{Tag: "text", Value: "`line one,\nline two,\nline three.`"}}
+	want := "text `line one,\nline two,\nline three.`\n"
 	if got := write(t, nodes); got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -361,10 +381,10 @@ func TestWriteMultilineValueAsChild(t *testing.T) {
 		Value: "ref",
 		Children: []Node{{
 			Tag:   "text",
-			Value: "Ohio birth certificate,\nfile no. 1923.",
+			Value: "`Ohio birth certificate,\nfile no. 1923.`",
 		}},
 	}}
-	want := "footnote ref\n  text `Ohio birth certificate,\n        file no. 1923.`\n"
+	want := "footnote ref\n  text `Ohio birth certificate,\nfile no. 1923.`\n"
 	if got := write(t, nodes); got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}

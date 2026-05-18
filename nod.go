@@ -99,67 +99,79 @@ func Parse(r io.Reader) ([]Node, error) {
 	return convert(root.children), nil
 }
 
+// parseValue scans the raw value string using the tokenization state machine,
+// consuming additional lines from scanner when a backtick block spans lines.
+// All content is emitted as-is; no delimiters are stripped or escape sequences
+// processed. See the String Tokenization Rules section in spec.md.
 func parseValue(raw string, scanner *bufio.Scanner, lineNum *int) string {
-	if !strings.HasPrefix(raw, "`") {
-		// Quoted value: strip surrounding double quotes
-		if len(raw) >= 2 && raw[0] == '"' && raw[len(raw)-1] == '"' {
-			return raw[1 : len(raw)-1]
-		}
-		return raw
+	if raw == "" {
+		return ""
 	}
-
-	// Backtick value
-	rest := raw[1:] // content after opening backtick
-
-	// Single-line backtick: `value`
-	if strings.HasSuffix(rest, "`") {
-		return rest[:len(rest)-1]
-	}
-
-	// Multi-line backtick: consume lines until closing backtick
-	var lines []string
-	if rest != "" {
-		lines = append(lines, rest)
-	}
-
-	firstContentIndent := -1
-	for scanner.Scan() {
-		*lineNum++
-		line := scanner.Text()
-
-		contentStart := 0
-		for contentStart < len(line) && line[contentStart] == ' ' {
-			contentStart++
-		}
-		if firstContentIndent == -1 && contentStart < len(line) {
-			firstContentIndent = contentStart
-		}
-
-		stripped := line
-		if firstContentIndent > 0 {
-			if len(line) >= firstContentIndent {
-				stripped = line[firstContentIndent:]
-			} else {
-				stripped = line[contentStart:]
+	var result strings.Builder
+	cur := raw
+	pos := 0
+	for pos < len(cur) {
+		ch := cur[pos]
+		switch ch {
+		case '"':
+			// Quoted string: emit everything including delimiters;
+			// \ skips the next character so \" doesn't end the string.
+			result.WriteByte('"')
+			pos++
+			for pos < len(cur) {
+				c := cur[pos]
+				if c == '\\' && pos+1 < len(cur) {
+					result.WriteByte(c)
+					result.WriteByte(cur[pos+1])
+					pos += 2
+				} else if c == '"' {
+					result.WriteByte('"')
+					pos++
+					break
+				} else {
+					result.WriteByte(c)
+					pos++
+				}
 			}
-		}
-
-		if strings.HasSuffix(stripped, "`") {
-			stripped = stripped[:len(stripped)-1]
-			if stripped != "" {
-				lines = append(lines, stripped)
+		case '`':
+			// Backtick block: emit everything including delimiters;
+			// may span multiple lines, no escape processing.
+			result.WriteByte('`')
+			pos++
+			closed := false
+			for !closed {
+				for pos < len(cur) {
+					c := cur[pos]
+					if c == '`' {
+						result.WriteByte('`')
+						pos++
+						closed = true
+						break
+					}
+					result.WriteByte(c)
+					pos++
+				}
+				if !closed {
+					if !scanner.Scan() {
+						return result.String()
+					}
+					*lineNum++
+					result.WriteByte('\n')
+					cur = scanner.Text()
+					pos = 0
+				}
 			}
-			break
+		default:
+			result.WriteByte(ch)
+			pos++
 		}
-		lines = append(lines, stripped)
 	}
-
-	return strings.Join(lines, "\n")
+	return result.String()
 }
 
 // Write formats nodes as Nod and writes to w. Children are indented with two
-// spaces per level. Multiline values use backtick delimiters; values with
-// leading or trailing whitespace are double-quoted.
+// spaces per level. Values are written as-is; callers are responsible for
+// encoding quoted strings and backtick blocks in Node.Value before calling.
 func Write(w io.Writer, nodes []Node) error {
 	bw := bufio.NewWriter(w)
 	if err := writeNodes(bw, nodes, 0); err != nil {
@@ -171,51 +183,16 @@ func Write(w io.Writer, nodes []Node) error {
 func writeNodes(w *bufio.Writer, nodes []Node, depth int) error {
 	prefix := strings.Repeat(" ", depth*2)
 	for _, n := range nodes {
-		if err := writeNode(w, n, prefix); err != nil {
+		var err error
+		if n.Value == "" {
+			_, err = fmt.Fprintf(w, "%s%s\n", prefix, n.Tag)
+		} else {
+			_, err = fmt.Fprintf(w, "%s%s %s\n", prefix, n.Tag, n.Value)
+		}
+		if err != nil {
 			return err
 		}
 		if err := writeNodes(w, n.Children, depth+1); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func writeNode(w *bufio.Writer, n Node, prefix string) error {
-	if n.Value == "" {
-		_, err := fmt.Fprintf(w, "%s%s\n", prefix, n.Tag)
-		return err
-	}
-
-	if strings.Contains(n.Value, "\n") {
-		return writeMultilineNode(w, n, prefix)
-	}
-
-	// Quote if value has leading or trailing whitespace.
-	if n.Value != strings.TrimSpace(n.Value) {
-		_, err := fmt.Fprintf(w, "%s%s \"%s\"\n", prefix, n.Tag, n.Value)
-		return err
-	}
-
-	_, err := fmt.Fprintf(w, "%s%s %s\n", prefix, n.Tag, n.Value)
-	return err
-}
-
-func writeMultilineNode(w *bufio.Writer, n Node, prefix string) error {
-	lines := strings.Split(n.Value, "\n")
-	// Continuation lines align with the first content character after " `".
-	contIndent := strings.Repeat(" ", len(prefix)+len(n.Tag)+2)
-
-	if _, err := fmt.Fprintf(w, "%s%s `%s\n", prefix, n.Tag, lines[0]); err != nil {
-		return err
-	}
-	for i, line := range lines[1:] {
-		isLast := i == len(lines)-2
-		if isLast {
-			_, err := fmt.Fprintf(w, "%s%s`\n", contIndent, line)
-			return err
-		}
-		if _, err := fmt.Fprintf(w, "%s%s\n", contIndent, line); err != nil {
 			return err
 		}
 	}
