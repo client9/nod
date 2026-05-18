@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 )
 
@@ -167,6 +168,24 @@ func parseValue(raw string, scanner *bufio.Scanner, lineNum *int) string {
 		}
 	}
 	return result.String()
+}
+
+// Quote encodes s for use as a Nod value. If s contains no whitespace,
+// double-quotes, or backticks, it is returned unchanged. If s contains a
+// double-quote but no backtick, it is wrapped in backticks. Otherwise
+// strconv.Quote is used.
+func Quote(s string) string {
+	hasSpace := strings.ContainsAny(s, " \t\n\r")
+	hasQuote := strings.ContainsRune(s, '"')
+	hasBacktick := strings.ContainsRune(s, '`')
+
+	if !hasSpace && !hasQuote && !hasBacktick {
+		return s
+	}
+	if hasQuote && !hasBacktick {
+		return "`" + s + "`"
+	}
+	return strconv.Quote(s)
 }
 
 // Write formats nodes as Nod and writes to w. Children are indented with two

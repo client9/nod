@@ -439,3 +439,30 @@ func assertNodesEqual(t *testing.T, a, b []Node, path string) {
 		assertNodesEqual(t, a[i].Children, b[i].Children, p)
 	}
 }
+
+// ---- Quote ----
+
+func TestQuote(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		// no special chars: pass through
+		{"hello", "hello"},
+		{"birth-date", "birth-date"},
+		// contains whitespace: strconv.Quote
+		{"hello world", `"hello world"`},
+		// contains double-quote, no backtick: wrap in backticks
+		{`say "hi"`, "`say \"hi\"`"},
+		// contains backtick, no double-quote: strconv.Quote
+		{"back`tick", `"back` + "`" + `tick"`},
+		// contains both: strconv.Quote
+		{`say "hi" and ` + "`bye`", `"say \"hi\" and ` + "`" + `bye` + "`" + `"`},
+	}
+	for _, c := range cases {
+		got := Quote(c.in)
+		if got != c.want {
+			t.Errorf("Quote(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
