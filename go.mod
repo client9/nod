@@ -1,3 +1,3 @@
-module github.com/client/nod
+module github.com/client9/nod
 
 go 1.26.2
