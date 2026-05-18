@@ -177,12 +177,13 @@ func parseValue(raw string, scanner *bufio.Scanner, lineNum *int) string {
 func Quote(s string) string {
 	hasSpace := strings.ContainsAny(s, " \t\n\r")
 	hasQuote := strings.ContainsRune(s, '"')
+	hasNewline := strings.ContainsRune(s, '\n')
 	hasBacktick := strings.ContainsRune(s, '`')
 
 	if !hasSpace && !hasQuote && !hasBacktick {
 		return s
 	}
-	if hasQuote && !hasBacktick {
+	if hasNewline || ( hasQuote && !hasBacktick) {
 		return "`" + s + "`"
 	}
 	return strconv.Quote(s)
