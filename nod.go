@@ -1,0 +1,223 @@
+package nod
+
+import (
+	"bufio"
+	"fmt"
+	"io"
+	"strings"
+)
+
+// Node is a single parsed node from a Nod document.
+type Node struct {
+	Tag      string
+	Value    string
+	Children []Node
+	Line     int // 1-based line number of the tag
+}
+
+// Parse reads a Nod-format document and returns the top-level nodes.
+func Parse(r io.Reader) ([]Node, error) {
+	// iNode is an internal node used during parsing. Children are []*iNode
+	// rather than []iNode so that pointers to nodes remain stable when a
+	// parent's children slice is appended to and its underlying array is
+	// reallocated. The indent stack holds *iNode pointers; if children were
+	// stored by value, a reallocation would move them and leave the stack
+	// holding dangling pointers into the old array. After parsing is complete
+	// the tree is converted to the public []Node type.
+	type iNode struct {
+		tag      string
+		value    string
+		line     int
+		children []*iNode
+	}
+
+	type frame struct {
+		indent int
+		node   *iNode
+	}
+
+	root := &iNode{}
+	stack := []frame{{indent: -1, node: root}}
+	scanner := bufio.NewScanner(r)
+	lineNum := 0
+
+	for scanner.Scan() {
+		lineNum++
+		line := scanner.Text()
+
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+
+		indent := len(line) - len(strings.TrimLeft(line, " "))
+
+		// Split on the first space to get the tag; take the rest of the line
+		// verbatim (leading spaces trimmed) so interior whitespace in quoted
+		// and backtick values is not collapsed.
+		tag := trimmed
+		rawValue := ""
+		if i := strings.IndexByte(trimmed, ' '); i >= 0 {
+			tag = trimmed[:i]
+			rawValue = strings.TrimLeft(trimmed[i+1:], " ")
+		}
+
+		nodeLine := lineNum // capture before parseValue advances lineNum
+		value := parseValue(rawValue, scanner, &lineNum)
+
+		node := &iNode{tag: tag, value: value, line: nodeLine}
+
+		for len(stack) > 1 && stack[len(stack)-1].indent >= indent {
+			stack = stack[:len(stack)-1]
+		}
+		parent := stack[len(stack)-1].node
+		parent.children = append(parent.children, node)
+		stack = append(stack, frame{indent: indent, node: node})
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+
+	var convert func([]*iNode) []Node
+	convert = func(nodes []*iNode) []Node {
+		if len(nodes) == 0 {
+			return nil
+		}
+		result := make([]Node, len(nodes))
+		for i, n := range nodes {
+			result[i] = Node{
+				Tag:      n.tag,
+				Value:    n.value,
+				Line:     n.line,
+				Children: convert(n.children),
+			}
+		}
+		return result
+	}
+
+	return convert(root.children), nil
+}
+
+func parseValue(raw string, scanner *bufio.Scanner, lineNum *int) string {
+	if !strings.HasPrefix(raw, "`") {
+		// Quoted value: strip surrounding double quotes
+		if len(raw) >= 2 && raw[0] == '"' && raw[len(raw)-1] == '"' {
+			return raw[1 : len(raw)-1]
+		}
+		return raw
+	}
+
+	// Backtick value
+	rest := raw[1:] // content after opening backtick
+
+	// Single-line backtick: `value`
+	if strings.HasSuffix(rest, "`") {
+		return rest[:len(rest)-1]
+	}
+
+	// Multi-line backtick: consume lines until closing backtick
+	var lines []string
+	if rest != "" {
+		lines = append(lines, rest)
+	}
+
+	firstContentIndent := -1
+	for scanner.Scan() {
+		*lineNum++
+		line := scanner.Text()
+
+		contentStart := 0
+		for contentStart < len(line) && line[contentStart] == ' ' {
+			contentStart++
+		}
+		if firstContentIndent == -1 && contentStart < len(line) {
+			firstContentIndent = contentStart
+		}
+
+		stripped := line
+		if firstContentIndent > 0 {
+			if len(line) >= firstContentIndent {
+				stripped = line[firstContentIndent:]
+			} else {
+				stripped = line[contentStart:]
+			}
+		}
+
+		if strings.HasSuffix(stripped, "`") {
+			stripped = stripped[:len(stripped)-1]
+			if stripped != "" {
+				lines = append(lines, stripped)
+			}
+			break
+		}
+		lines = append(lines, stripped)
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+// Write formats nodes as Nod and writes to w. Children are indented with two
+// spaces per level. Multiline values use backtick delimiters; values with
+// leading or trailing whitespace are double-quoted.
+func Write(w io.Writer, nodes []Node) error {
+	bw := bufio.NewWriter(w)
+	if err := writeNodes(bw, nodes, 0); err != nil {
+		return err
+	}
+	return bw.Flush()
+}
+
+func writeNodes(w *bufio.Writer, nodes []Node, depth int) error {
+	prefix := strings.Repeat(" ", depth*2)
+	for _, n := range nodes {
+		if err := writeNode(w, n, prefix); err != nil {
+			return err
+		}
+		if err := writeNodes(w, n.Children, depth+1); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func writeNode(w *bufio.Writer, n Node, prefix string) error {
+	if n.Value == "" {
+		_, err := fmt.Fprintf(w, "%s%s\n", prefix, n.Tag)
+		return err
+	}
+
+	if strings.Contains(n.Value, "\n") {
+		return writeMultilineNode(w, n, prefix)
+	}
+
+	// Quote if value has leading or trailing whitespace.
+	if n.Value != strings.TrimSpace(n.Value) {
+		_, err := fmt.Fprintf(w, "%s%s \"%s\"\n", prefix, n.Tag, n.Value)
+		return err
+	}
+
+	_, err := fmt.Fprintf(w, "%s%s %s\n", prefix, n.Tag, n.Value)
+	return err
+}
+
+func writeMultilineNode(w *bufio.Writer, n Node, prefix string) error {
+	lines := strings.Split(n.Value, "\n")
+	// Continuation lines align with the first content character after " `".
+	contIndent := strings.Repeat(" ", len(prefix)+len(n.Tag)+2)
+
+	if _, err := fmt.Fprintf(w, "%s%s `%s\n", prefix, n.Tag, lines[0]); err != nil {
+		return err
+	}
+	for i, line := range lines[1:] {
+		isLast := i == len(lines)-2
+		if isLast {
+			_, err := fmt.Fprintf(w, "%s%s`\n", contIndent, line)
+			return err
+		}
+		if _, err := fmt.Fprintf(w, "%s%s\n", contIndent, line); err != nil {
+			return err
+		}
+	}
+	return nil
+}
