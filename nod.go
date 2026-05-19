@@ -158,6 +158,14 @@ func scanLine(content string, scanner *bufio.Scanner) string {
 	return result.String()
 }
 
+// NewNode creates a Node whose Line is set from args via Quote and Join,
+// equivalent to calling SetArgs on a zero Node.
+func NewNode(args ...string) Node {
+	var n Node
+	n.SetArgs(args)
+	return n
+}
+
 // Head returns the first whitespace-delimited token of Line. Returns an empty
 // string if Line is empty.
 func (n Node) Head() string {

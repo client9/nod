@@ -450,7 +450,32 @@ func assertNodesEqual(t *testing.T, a, b []Node, path string) {
 	}
 }
 
-// ---- Head, Args, SetArgs ----
+// ---- NewNode, Head, Args, SetArgs ----
+
+func TestNewNode(t *testing.T) {
+	n := NewNode("birth")
+	if n.Line != "birth" {
+		t.Errorf("got %q", n.Line)
+	}
+
+	// multi-word arg gets quoted; Args() decodes it back
+	n = NewNode("name", "Edward Thomas Miller")
+	if n.Line != `name "Edward Thomas Miller"` {
+		t.Errorf("got %q", n.Line)
+	}
+	if args := n.Args(); len(args) != 2 || args[1] != "Edward Thomas Miller" {
+		t.Errorf("args = %v", args)
+	}
+
+	// args requiring quoting
+	n = NewNode("note", `he said "hi"`)
+	if n.Head() != "note" {
+		t.Errorf("head = %q", n.Head())
+	}
+	if args := n.Args(); len(args) != 2 || args[1] != `he said "hi"` {
+		t.Errorf("args = %v", args)
+	}
+}
 
 func TestHead(t *testing.T) {
 	cases := []struct {
