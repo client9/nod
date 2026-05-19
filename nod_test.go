@@ -450,6 +450,68 @@ func assertNodesEqual(t *testing.T, a, b []Node, path string) {
 	}
 }
 
+// ---- TrimIndent / AddIndent ----
+
+func TestTrimIndent(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		// common indent stripped
+		{"  foo\n  bar", "foo\nbar"},
+		// partial indent: strip only the minimum
+		{"    foo\n  bar", "  foo\nbar"},
+		// blank lines excluded from measurement, preserved in output
+		{"  foo\n\n  bar", "foo\n\nbar"},
+		// whitespace-only lines excluded from measurement
+		{"  foo\n   \n  bar", "foo\n \nbar"},
+		// no common indent
+		{"foo\nbar", "foo\nbar"},
+		// zero common indent (first line at column 0)
+		{"foo\n  bar", "foo\n  bar"},
+		// single line
+		{"  hello", "hello"},
+		// empty string
+		{"", ""},
+	}
+	for _, c := range cases {
+		got := TrimIndent(c.in)
+		if got != c.want {
+			t.Errorf("TrimIndent(%q)\n  got  %q\n  want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestAddIndent(t *testing.T) {
+	cases := []struct {
+		in     string
+		indent string
+		want   string
+	}{
+		{"foo\nbar", "  ", "  foo\n  bar"},
+		// blank lines not indented
+		{"foo\n\nbar", "  ", "  foo\n\n  bar"},
+		// empty indent is a no-op
+		{"foo\nbar", "", "foo\nbar"},
+		// single line
+		{"hello", "\t", "\thello"},
+	}
+	for _, c := range cases {
+		got := AddIndent(c.in, c.indent)
+		if got != c.want {
+			t.Errorf("AddIndent(%q, %q)\n  got  %q\n  want %q", c.in, c.indent, got, c.want)
+		}
+	}
+}
+
+func TestTrimAddIndentRoundTrip(t *testing.T) {
+	s := "  foo\n  bar\n\n  baz"
+	trimmed := TrimIndent(s)
+	if got := AddIndent(trimmed, "  "); got != s {
+		t.Errorf("round-trip failed:\n  got  %q\n  want %q", got, s)
+	}
+}
+
 // ---- NewNode, Head, Args, SetArgs ----
 
 func TestNewNode(t *testing.T) {

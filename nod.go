@@ -158,6 +158,50 @@ func scanLine(content string, scanner *bufio.Scanner) string {
 	return result.String()
 }
 
+// TrimIndent removes the common leading-space prefix from every line in s.
+// Blank and whitespace-only lines are excluded when measuring the common
+// prefix but are preserved as-is in the output.
+func TrimIndent(s string) string {
+	lines := strings.Split(s, "\n")
+	min := -1
+	for _, line := range lines {
+		stripped := strings.TrimLeft(line, " ")
+		if stripped == "" {
+			continue
+		}
+		if n := len(line) - len(stripped); min < 0 || n < min {
+			min = n
+		}
+	}
+	if min <= 0 {
+		return s
+	}
+	out := make([]string, len(lines))
+	for i, line := range lines {
+		if len(line) >= min {
+			out[i] = line[min:]
+		} else {
+			out[i] = ""
+		}
+	}
+	return strings.Join(out, "\n")
+}
+
+// AddIndent prepends indent to every non-empty line in s.
+func AddIndent(s, indent string) string {
+	if indent == "" {
+		return s
+	}
+	lines := strings.Split(s, "\n")
+	out := make([]string, len(lines))
+	for i, line := range lines {
+		if line != "" {
+			out[i] = indent + line
+		}
+	}
+	return strings.Join(out, "\n")
+}
+
 // NewNode creates a Node whose Line is set from args via Quote and Join,
 // equivalent to calling SetArgs on a zero Node.
 func NewNode(args ...string) Node {
