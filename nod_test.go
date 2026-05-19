@@ -65,67 +65,78 @@ func TestEmpty(t *testing.T) {
 
 // ---- blank lines ----
 
-func TestBlankLinesIgnored(t *testing.T) {
-	nodes := parse(t, "\n\na\n\nb\n\n")
-	if len(nodes) != 2 {
-		t.Fatalf("want 2 nodes, got %d", len(nodes))
+func TestBlankNodeBetweenSiblings(t *testing.T) {
+	// Blank line becomes a sibling ("") between 2 and 4.
+	src := "foo\n   1\n   2\n   \n   4\n"
+	nodes := parse(t, src)
+	if len(nodes) != 1 {
+		t.Fatalf("want 1 top-level node, got %d", len(nodes))
+	}
+	children := nodes[0].Children
+	if len(children) != 4 {
+		t.Fatalf("want 4 children, got %d: %v", len(children), children)
+	}
+	want := []string{"1", "2", "", "4"}
+	for i, w := range want {
+		if children[i].Line != w {
+			t.Errorf("children[%d].Line = %q, want %q", i, children[i].Line, w)
+		}
 	}
 }
 
-// ---- comments ----
+func TestBlankNodeBeforeNewTopLevel(t *testing.T) {
+	// Blank line between children of foo and a new top-level node: blank
+	// becomes the last child of foo; name is top-level.
+	src := "foo\n   1\n   2\n\nname\n   first\n"
+	nodes := parse(t, src)
+	if len(nodes) != 2 {
+		t.Fatalf("want 2 top-level nodes, got %d", len(nodes))
+	}
+	foo := nodes[0]
+	if len(foo.Children) != 3 {
+		t.Fatalf("foo: want 3 children, got %d", len(foo.Children))
+	}
+	if foo.Children[2].Line != "" {
+		t.Errorf("foo.Children[2].Line = %q, want empty", foo.Children[2].Line)
+	}
+	if nodes[1].Line != "name" {
+		t.Errorf("nodes[1].Line = %q, want %q", nodes[1].Line, "name")
+	}
+}
 
-func TestCommentBecomesNode(t *testing.T) {
+func TestConsecutiveBlanksDeindent(t *testing.T) {
+	// Two consecutive blank lines: the first becomes a child of foo (popping
+	// the last child off the stack); the second uses foo's indent (0), pops
+	// foo, and becomes a top-level node. This is the natural consequence of
+	// the rule — consecutive blanks bubble up through the tree.
+	src := "foo\n   1\n\n\nbar\n"
+	nodes := parse(t, src)
+	// nodes: foo, blank(top-level), bar
+	if len(nodes) != 3 {
+		t.Fatalf("want 3 top-level nodes, got %d: %v", len(nodes), nodes)
+	}
+	if nodes[1].Line != "" {
+		t.Errorf("nodes[1].Line = %q, want empty", nodes[1].Line)
+	}
+	if nodes[2].Line != "bar" {
+		t.Errorf("nodes[2].Line = %q", nodes[2].Line)
+	}
+	// foo has two children: 1 and a blank (from the first blank line)
+	if len(nodes[0].Children) != 2 || nodes[0].Children[1].Line != "" {
+		t.Errorf("foo.Children = %v", nodes[0].Children)
+	}
+}
+
+// ---- hash is not special ----
+
+func TestHashIsOrdinary(t *testing.T) {
+	// Lines starting with # are ordinary nodes, not comments.
 	nodes := parse(t, "# a comment\na\n")
 	if len(nodes) != 2 {
 		t.Fatalf("want 2 nodes, got %d", len(nodes))
 	}
 	if nodes[0].Line != "# a comment" {
 		t.Errorf("got %q", nodes[0].Line)
-	}
-	if nodes[1].Line != "a" {
-		t.Errorf("got %q", nodes[1].Line)
-	}
-}
-
-func TestCommentAttachesToCurrentContext(t *testing.T) {
-	// A comment attaches to whatever node is on top of the indent stack at the
-	// time it appears, without modifying the stack. Subsequent regular nodes
-	// continue as if the comment wasn't there.
-	src := "birth\n  date 1923\n  # comment\n  place Toledo\n"
-	nodes := parse(t, src)
-	if len(nodes) != 1 {
-		t.Fatalf("want 1 top-level node, got %d", len(nodes))
-	}
-	birth := nodes[0]
-	// birth.Children = [date, comment (child of date), place]
-	// comment is a child of date (the stack-top at the time)
-	if len(birth.Children) != 2 {
-		t.Fatalf("birth: want 2 children, got %d: %v", len(birth.Children), birth.Children)
-	}
-	date := birth.Children[0]
-	if date.Line != "date 1923" {
-		t.Errorf("date.Line = %q", date.Line)
-	}
-	if len(date.Children) != 1 || date.Children[0].Line != "# comment" {
-		t.Errorf("date.Children = %v", date.Children)
-	}
-	if birth.Children[1].Line != "place Toledo" {
-		t.Errorf("place.Line = %q", birth.Children[1].Line)
-	}
-}
-
-func TestCommentAtTopLevelBetweenNodes(t *testing.T) {
-	src := "a\n# comment\nb\n"
-	nodes := parse(t, src)
-	// comment attaches to a (the stack-top), a and b are both top-level
-	if len(nodes) != 2 {
-		t.Fatalf("want 2 top-level nodes, got %d", len(nodes))
-	}
-	if nodes[0].Line != "a" || nodes[1].Line != "b" {
-		t.Errorf("got %q, %q", nodes[0].Line, nodes[1].Line)
-	}
-	if len(nodes[0].Children) != 1 || nodes[0].Children[0].Line != "# comment" {
-		t.Errorf("a.Children = %v", nodes[0].Children)
 	}
 }
 

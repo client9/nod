@@ -42,15 +42,16 @@ func Parse(r io.Reader) ([]Node, error) {
 
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" {
-			continue
-		}
-
-		// Comment lines become nodes attached to the current stack-top but do
-		// not push onto the stack, so they cannot be parents and do not
-		// trigger indent or dedent in subsequent lines.
-		if strings.HasPrefix(trimmed, "#") {
-			node := &iNode{line: trimmed}
-			stack[len(stack)-1].node.children = append(stack[len(stack)-1].node.children, node)
+			// Blank line creates an empty node (Line == "") as a sibling of the
+			// most recently processed node. We use the current stack top's indent
+			// as the effective indent so normal dedenting fires, but the blank
+			// node is not pushed — it cannot be a parent.
+			effectiveIndent := stack[len(stack)-1].indent
+			for len(stack) > 1 && stack[len(stack)-1].indent >= effectiveIndent {
+				stack = stack[:len(stack)-1]
+			}
+			stack[len(stack)-1].node.children = append(
+				stack[len(stack)-1].node.children, &iNode{})
 			continue
 		}
 
