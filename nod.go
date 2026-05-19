@@ -315,24 +315,25 @@ func Quote(s string) string {
 	return strconv.Quote(s)
 }
 
-// Write formats nodes as Nod and writes to w. Children are indented with two
-// spaces per level. Node.Line is written as-is; callers are responsible for
-// encoding quoted strings and backtick blocks before calling.
-func Write(w io.Writer, nodes []Node) error {
+// Write formats nodes as Nod and writes to w. indent is prepended once per
+// nesting level; a typical value is "  " (two spaces). Node.Line is written
+// as-is; callers are responsible for encoding quoted strings and backtick
+// blocks before calling.
+func Write(w io.Writer, nodes []Node, indent string) error {
 	bw := bufio.NewWriter(w)
-	if err := writeNodes(bw, nodes, 0); err != nil {
+	if err := writeNodes(bw, nodes, indent, 0); err != nil {
 		return err
 	}
 	return bw.Flush()
 }
 
-func writeNodes(w *bufio.Writer, nodes []Node, depth int) error {
-	prefix := strings.Repeat(" ", depth*2)
+func writeNodes(w *bufio.Writer, nodes []Node, indent string, depth int) error {
+	prefix := strings.Repeat(indent, depth)
 	for _, n := range nodes {
 		if _, err := fmt.Fprintf(w, "%s%s\n", prefix, n.Line); err != nil {
 			return err
 		}
-		if err := writeNodes(w, n.Children, depth+1); err != nil {
+		if err := writeNodes(w, n.Children, indent, depth+1); err != nil {
 			return err
 		}
 	}

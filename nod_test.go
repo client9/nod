@@ -10,7 +10,7 @@ import (
 func write(t *testing.T, nodes []Node) string {
 	t.Helper()
 	var buf bytes.Buffer
-	if err := Write(&buf, nodes); err != nil {
+	if err := Write(&buf, nodes, "  "); err != nil {
 		t.Fatalf("Write error: %v", err)
 	}
 	return buf.String()
