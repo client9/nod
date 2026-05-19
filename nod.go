@@ -10,10 +10,8 @@ import (
 
 // Node is a single parsed node from a Nod document.
 type Node struct {
-	Tag      string
-	Value    string
+	Line     string // trimmed line content (tag + value); may contain \n for multiline backtick blocks
 	Children []Node
-	Line     int // 1-based line number of the tag
 }
 
 // Parse reads a Nod-format document and returns the top-level nodes.
@@ -26,9 +24,7 @@ func Parse(r io.Reader) ([]Node, error) {
 	// holding dangling pointers into the old array. After parsing is complete
 	// the tree is converted to the public []Node type.
 	type iNode struct {
-		tag      string
-		value    string
-		line     int
+		line     string
 		children []*iNode
 	}
 
@@ -40,33 +36,27 @@ func Parse(r io.Reader) ([]Node, error) {
 	root := &iNode{}
 	stack := []frame{{indent: -1, node: root}}
 	scanner := bufio.NewScanner(r)
-	lineNum := 0
 
 	for scanner.Scan() {
-		lineNum++
 		line := scanner.Text()
 
 		trimmed := strings.TrimSpace(line)
-		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+		if trimmed == "" {
+			continue
+		}
+
+		// Comment lines become nodes attached to the current stack-top but do
+		// not push onto the stack, so they cannot be parents and do not
+		// trigger indent or dedent in subsequent lines.
+		if strings.HasPrefix(trimmed, "#") {
+			node := &iNode{line: trimmed}
+			stack[len(stack)-1].node.children = append(stack[len(stack)-1].node.children, node)
 			continue
 		}
 
 		indent := len(line) - len(strings.TrimLeft(line, " "))
-
-		// Split on the first space to get the tag; take the rest of the line
-		// verbatim (leading spaces trimmed) so interior whitespace in quoted
-		// and backtick values is not collapsed.
-		tag := trimmed
-		rawValue := ""
-		if i := strings.IndexByte(trimmed, ' '); i >= 0 {
-			tag = trimmed[:i]
-			rawValue = strings.TrimLeft(trimmed[i+1:], " ")
-		}
-
-		nodeLine := lineNum // capture before parseValue advances lineNum
-		value := parseValue(rawValue, scanner, &lineNum)
-
-		node := &iNode{tag: tag, value: value, line: nodeLine}
+		content := scanLine(trimmed, scanner)
+		node := &iNode{line: content}
 
 		for len(stack) > 1 && stack[len(stack)-1].indent >= indent {
 			stack = stack[:len(stack)-1]
@@ -88,8 +78,6 @@ func Parse(r io.Reader) ([]Node, error) {
 		result := make([]Node, len(nodes))
 		for i, n := range nodes {
 			result[i] = Node{
-				Tag:      n.tag,
-				Value:    n.value,
 				Line:     n.line,
 				Children: convert(n.children),
 			}
@@ -100,16 +88,17 @@ func Parse(r io.Reader) ([]Node, error) {
 	return convert(root.children), nil
 }
 
-// parseValue scans the raw value string using the tokenization state machine,
-// consuming additional lines from scanner when a backtick block spans lines.
-// All content is emitted as-is; no delimiters are stripped or escape sequences
-// processed. See the String Tokenization Rules section in spec.md.
-func parseValue(raw string, scanner *bufio.Scanner, lineNum *int) string {
-	if raw == "" {
-		return ""
+// scanLine scans the full trimmed line content using the tokenization state
+// machine, consuming additional lines from scanner when a backtick block spans
+// lines. All content is emitted as-is. See the String Tokenization Rules
+// section in spec.md.
+func scanLine(content string, scanner *bufio.Scanner) string {
+	// Fast path: no quotes or backticks means no continuation lines possible.
+	if !strings.ContainsAny(content, "\"`") {
+		return content
 	}
 	var result strings.Builder
-	cur := raw
+	cur := content
 	pos := 0
 	for pos < len(cur) {
 		ch := cur[pos]
@@ -156,7 +145,6 @@ func parseValue(raw string, scanner *bufio.Scanner, lineNum *int) string {
 					if !scanner.Scan() {
 						return result.String()
 					}
-					*lineNum++
 					result.WriteByte('\n')
 					cur = scanner.Text()
 					pos = 0
@@ -168,6 +156,91 @@ func parseValue(raw string, scanner *bufio.Scanner, lineNum *int) string {
 		}
 	}
 	return result.String()
+}
+
+// Head returns the first whitespace-delimited token of Line. Returns an empty
+// string if Line is empty.
+func (n Node) Head() string {
+	i := strings.IndexByte(n.Line, ' ')
+	if i < 0 {
+		return n.Line
+	}
+	return n.Line[:i]
+}
+
+// Args parses Line into a slice of strings using shell-like tokenization.
+// Tokens are separated by whitespace. Double-quoted strings are decoded with
+// strconv.Unquote (Go string escape rules); on a malformed quoted string the
+// raw token is returned unchanged. Backtick-quoted strings have their
+// delimiters stripped and their content returned as-is (no escape processing).
+func (n Node) Args() []string {
+	var result []string
+	s := n.Line
+	for {
+		// Skip whitespace between tokens.
+		i := 0
+		for i < len(s) && (s[i] == ' ' || s[i] == '\t' || s[i] == '\n') {
+			i++
+		}
+		s = s[i:]
+		if s == "" {
+			break
+		}
+
+		var token string
+		switch s[0] {
+		case '"':
+			end := 1
+			for end < len(s) {
+				if s[end] == '\\' && end+1 < len(s) {
+					end += 2
+				} else if s[end] == '"' {
+					end++
+					break
+				} else {
+					end++
+				}
+			}
+			raw := s[:end]
+			s = s[end:]
+			if unquoted, err := strconv.Unquote(raw); err == nil {
+				token = unquoted
+			} else {
+				token = raw
+			}
+		case '`':
+			end := 1
+			for end < len(s) && s[end] != '`' {
+				end++
+			}
+			if end < len(s) {
+				token = s[1:end] // content between delimiters
+				s = s[end+1:]
+			} else {
+				token = s[1:end]
+				s = ""
+			}
+		default:
+			end := 0
+			for end < len(s) && s[end] != ' ' && s[end] != '\t' && s[end] != '\n' {
+				end++
+			}
+			token = s[:end]
+			s = s[end:]
+		}
+		result = append(result, token)
+	}
+	return result
+}
+
+// SetArgs encodes args into n.Line by quoting each argument with Quote and
+// joining with spaces.
+func (n *Node) SetArgs(args []string) {
+	quoted := make([]string, len(args))
+	for i, a := range args {
+		quoted[i] = Quote(a)
+	}
+	n.Line = strings.Join(quoted, " ")
 }
 
 // Quote encodes s for use as a Nod value. If s contains no whitespace,
@@ -183,15 +256,15 @@ func Quote(s string) string {
 	if !hasSpace && !hasQuote && !hasBacktick {
 		return s
 	}
-	if hasNewline || ( hasQuote && !hasBacktick) {
+	if hasNewline || (hasQuote && !hasBacktick) {
 		return "`" + s + "`"
 	}
 	return strconv.Quote(s)
 }
 
 // Write formats nodes as Nod and writes to w. Children are indented with two
-// spaces per level. Values are written as-is; callers are responsible for
-// encoding quoted strings and backtick blocks in Node.Value before calling.
+// spaces per level. Node.Line is written as-is; callers are responsible for
+// encoding quoted strings and backtick blocks before calling.
 func Write(w io.Writer, nodes []Node) error {
 	bw := bufio.NewWriter(w)
 	if err := writeNodes(bw, nodes, 0); err != nil {
@@ -203,13 +276,7 @@ func Write(w io.Writer, nodes []Node) error {
 func writeNodes(w *bufio.Writer, nodes []Node, depth int) error {
 	prefix := strings.Repeat(" ", depth*2)
 	for _, n := range nodes {
-		var err error
-		if n.Value == "" {
-			_, err = fmt.Fprintf(w, "%s%s\n", prefix, n.Tag)
-		} else {
-			_, err = fmt.Fprintf(w, "%s%s %s\n", prefix, n.Tag, n.Value)
-		}
-		if err != nil {
+		if _, err := fmt.Fprintf(w, "%s%s\n", prefix, n.Line); err != nil {
 			return err
 		}
 		if err := writeNodes(w, n.Children, depth+1); err != nil {
