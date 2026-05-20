@@ -221,6 +221,17 @@ func (n Node) Head() string {
 	return n.Line[:i]
 }
 
+// Value returns everything in Line after the first whitespace-delimited token,
+// with leading whitespace trimmed. Returns an empty string if Line has no
+// value (tag only).
+func (n Node) Value() string {
+	i := strings.IndexByte(n.Line, ' ')
+	if i < 0 {
+		return ""
+	}
+	return strings.TrimLeft(n.Line[i+1:], " ")
+}
+
 // Args parses Line into a slice of strings using shell-like tokenization.
 // Tokens are separated by whitespace. Double-quoted strings are decoded with
 // strconv.Unquote (Go string escape rules); on a malformed quoted string the

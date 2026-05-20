@@ -568,6 +568,25 @@ func TestHead(t *testing.T) {
 	}
 }
 
+func TestValue(t *testing.T) {
+	cases := []struct {
+		line string
+		want string
+	}{
+		{"birth", ""},
+		{"date 1923-04-17", "1923-04-17"},
+		{"name Edward Thomas Miller", "Edward Thomas Miller"},
+		{"place  Toledo, Ohio", "Toledo, Ohio"}, // extra leading space trimmed
+		{"", ""},
+	}
+	for _, c := range cases {
+		n := Node{Line: c.line}
+		if got := n.Value(); got != c.want {
+			t.Errorf("Value(%q) = %q, want %q", c.line, got, c.want)
+		}
+	}
+}
+
 func TestArgs(t *testing.T) {
 	cases := []struct {
 		line string
